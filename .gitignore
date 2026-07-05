@@ -14,6 +14,14 @@ backend/data/tag_stats.json
 .vscode/
 .idea/
 
+# 包含密码的脚本（已废弃）
+fix_root.py
+sync.bat
+sync.ps1
+
+# SQLite 数据库（不应上传）
+backend/data/items.db
+
 # 系统文件
 .DS_Store
 Thumbs.db
