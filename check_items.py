@@ -1,9 +1,24 @@
-"""检查数据库中现有商品和图片"""
+"""
+检查数据库中现有商品和图片
+用法：python check_items.py
+"""
+import os
 import paramiko
+from dotenv import load_dotenv
+
+dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend", ".env")
+load_dotenv(dotenv_path)
+
+HOST = "39.106.1.145"
+USER = "root"
+PASS = os.environ.get("SERVER_PASS", "")
+if not PASS:
+    print("❌ 未找到 SERVER_PASS，请在 backend/.env 中设置")
+    exit(1)
 
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect("39.106.1.145", username="root", password="Thudy87ubantu...", timeout=10, look_for_keys=False, allow_agent=False)
+ssh.connect(HOST, username=USER, password=PASS, timeout=10, look_for_keys=False, allow_agent=False)
 
 print("=== 所有在售商品 ===")
 _, o, _ = ssh.exec_command(
