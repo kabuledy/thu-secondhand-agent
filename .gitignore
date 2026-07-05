@@ -25,6 +25,12 @@ backend/data/items.db
 # 设计素材（不上传 GitHub）
 清小闲头像设计 .png
 
+# 域名相关文档（已弃用）
+docs/域名DNS和CloudFlare是什么.md
+
+# 临时脚本
+_fix_server.py
+
 # 系统文件
 .DS_Store
 Thumbs.db

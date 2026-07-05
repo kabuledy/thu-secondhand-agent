@@ -21,7 +21,7 @@ PASS = os.environ.get("SERVER_PASS", "")
 if not PASS:
     print("❌ 未找到 SERVER_PASS，请在 backend/.env 中设置")
     sys.exit(1)
-DOMAIN = "thu-secondhand.top"
+PUBLIC_BASE = "http://39.106.1.145/uploads"
 LOCAL = os.path.dirname(os.path.abspath(__file__))
 REMOTE = "/opt/thu-secondhand"
 
@@ -101,12 +101,12 @@ def main():
     print("\n配置服务器图片公网地址...")
     stdin, stdout, stderr = ssh.exec_command(
         "grep -q '^PUBLIC_BASE=' /opt/thu-secondhand/backend/.env && "
-        "sed -i 's|^PUBLIC_BASE=.*|PUBLIC_BASE=https://thu-secondhand.top/uploads|' "
+        f"sed -i 's|^PUBLIC_BASE=.*|{PUBLIC_BASE}|' "
         "/opt/thu-secondhand/backend/.env || "
-        "echo 'PUBLIC_BASE=https://thu-secondhand.top/uploads' "
+        f"echo '{PUBLIC_BASE}' "
         ">> /opt/thu-secondhand/backend/.env"
     )
-    print("  ✅ PUBLIC_BASE 已设为 https://thu-secondhand.top/uploads")
+    print(f"  ✅ PUBLIC_BASE 已设为 {PUBLIC_BASE}")
 
     # 再次重启以加载新环境变量
     print("重新加载环境变量...")
@@ -115,7 +115,7 @@ def main():
 
     ssh.close()
     print(f"\n✅ 同步完成！（{ok} 个文件）")
-    print(f"   后端地址: https://{DOMAIN}/")
+    print(f"   后端地址: http://{HOST}/")
 
 
 if __name__ == "__main__":
