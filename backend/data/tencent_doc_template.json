@@ -1,0 +1,52 @@
+{
+  "sheet_name": "THU二手集市商品库",
+  "description": "MVP 阶段使用的腾讯文档/飞书表格模板。复制此结构创建在线表格。",
+  "columns": [
+    { "field": "item_id",         "label": "商品编号",           "width": 200, "description": "自动生成，如 ITEM-20260703-0001" },
+    { "field": "name",           "label": "物品名称",           "width": 150, "description": "必填" },
+    { "field": "description",    "label": "物品描述",           "width": 350, "description": "必填，应包含品牌/新旧/价格等" },
+    { "field": "price",          "label": "价格",               "width": 100, "description": "可选，如：300 / 面议" },
+    { "field": "category",       "label": "分类",               "width": 100, "description": "自动归类：交通工具/电子产品/书籍/家具/衣物/体育用品/生活用品/其他" },
+    { "field": "tags",           "label": "标签",               "width": 200, "description": "逗号分隔，如：通勤,学生" },
+    { "field": "image_url",      "label": "图片链接",           "width": 300, "description": "可选，图片 URL" },
+    { "field": "image_description", "label": "图片分析结果",     "width": 200, "description": "可选，视觉模型返回的描述" },
+    { "field": "contact_type",   "label": "联系方式类型",       "width": 100, "description": "wechat/phone/email/in_person" },
+    { "field": "contact_value",  "label": "联系方式内容",       "width": 200, "description": "微信号/手机号/邮箱" },
+    { "field": "status",         "label": "状态",               "width": 80,  "description": "active/sold/deleted" },
+    { "field": "created_at",     "label": "发布时间",           "width": 180, "description": "ISO 时间戳" },
+    { "field": "updated_at",     "label": "更新时间",           "width": 180, "description": "ISO 时间戳" }
+  ],
+  "sample_data": [
+    {
+      "item_id": "ITEM-20260703-0001",
+      "name": "山地自行车",
+      "description": "蓝色山地车，26寸，变速正常，九成新，通勤够用",
+      "price": "300",
+      "category": "交通工具",
+      "tags": "通勤,学生",
+      "image_url": "https://example.com/bike.jpg",
+      "image_description": "蓝色山地自行车",
+      "contact_type": "wechat",
+      "contact_value": "thuxxx_2024",
+      "status": "active",
+      "created_at": "2026-07-03T10:00:00",
+      "updated_at": "2026-07-03T10:00:00"
+    },
+    {
+      "item_id": "ITEM-20260703-0002",
+      "name": "微积分教材",
+      "description": "微积分(上)教材，几乎没有使用痕迹，含课后习题解答册",
+      "price": "50",
+      "category": "书籍",
+      "tags": "教材,数学",
+      "image_url": "",
+      "image_description": "",
+      "contact_type": "phone",
+      "contact_value": "13800138000",
+      "status": "active",
+      "created_at": "2026-07-03T14:30:00",
+      "updated_at": "2026-07-03T14:30:00"
+    }
+  ],
+  "usage_note": "在腾讯文档中创建此结构的表格后，通过腾讯文档API读取/写入。后端本地的 items_db.json 可以导出到表格中作为备份。"
+}

@@ -1,0 +1,19 @@
+# 环境变量（含 API Key）
+.env
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 运行时数据（JSON 文件存储的商品数据）
+backend/data/items_db.json
+backend/data/tag_stats.json
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db

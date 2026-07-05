@@ -1,0 +1,7 @@
+flask==3.0.0
+flask-cors==4.0.0
+requests==2.31.0
+python-dotenv==1.0.0
+
+# 图片存储 — 腾讯云 COS（生产环境必装，开发环境可选）
+cos-python-sdk-v5==1.9.30
