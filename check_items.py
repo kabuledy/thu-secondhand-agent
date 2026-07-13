@@ -9,11 +9,11 @@ from dotenv import load_dotenv
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend", ".env")
 load_dotenv(dotenv_path)
 
-HOST = "39.106.1.145"
+HOST = os.environ.get("SERVER_HOST", "")
 USER = "root"
 PASS = os.environ.get("SERVER_PASS", "")
-if not PASS:
-    print("❌ 未找到 SERVER_PASS，请在 backend/.env 中设置")
+if not HOST or not PASS:
+    print("❌ 请在 backend/.env 中设置 SERVER_HOST 和 SERVER_PASS")
     exit(1)
 
 ssh = paramiko.SSHClient()

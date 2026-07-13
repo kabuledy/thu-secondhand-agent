@@ -26,11 +26,11 @@ dotenv_path = os.path.join(LOCAL, "backend", ".env")
 load_dotenv(dotenv_path)
 
 # ── 服务器配置（与 sync.py 一致） ──
-HOST = "39.106.1.145"
+HOST = os.environ.get("SERVER_HOST", "")
 USER = "root"
 PASS = os.environ.get("SERVER_PASS", "")
-if not PASS:
-    print("❌ 未找到 SERVER_PASS，请在 backend/.env 中设置")
+if not HOST or not PASS:
+    print("❌ 请在 backend/.env 中设置 SERVER_HOST 和 SERVER_PASS")
     sys.exit(1)
 REMOTE_DB = "/opt/thu-secondhand/backend/data/items.db"
 REMOTE_UPLOADS = "/opt/thu-secondhand/backend/data/uploads"

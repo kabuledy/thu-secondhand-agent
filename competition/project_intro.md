@@ -63,24 +63,32 @@
 ### 4.1 整体架构
 
 ```
-清小搭智能体（LLM）
-    │ （通过工具函数调用）
-后端 API（Python Flask）
+清小搭（代理层）
+    │ POST /v1/chat/completions
+后端自托管 LLM 引擎（Python Flask）
     │
-    ├── 语义引擎（Embedding + 余弦相似度）
-    ├── 视觉引擎（GLM-4V 图像分析）
-    └── 搜索引擎（联网搜索辅助生成）
+    ├── DeepSeek Function Calling（对话理解 + 工具调用）
+    │       ├── 发布商品（list_item）
+    │       ├── 搜索商品（search_item / search_by_tag）
+    │       ├── 图片分析（analyze_image）
+    │       ├── 联网搜索（web_search）
+    │       ├── 查看详情（get_item_detail）
+    │       ├── 更新状态（update_status）
+    │       └── 热门标签（get_popular_tags）
+    │
+    ├── 语义引擎（SiliconFlow BGE Embedding → 余弦相似度）
+    └── 视觉引擎（DeepSeek 多模态）
 ```
 
 ### 4.2 关键技术
 
 | 技术 | 用途 | 方案 |
 |------|------|------|
-| LLM | 对话理解与生成 | 清小搭平台内置 |
-| 语义匹配 | 模糊搜索 | 智谱 Embedding-2 |
-| 图像识别 | 拍照识物 | 智谱 GLM-4V |
-| 数据存储 | 商品信息持久化 | Supabase / JSON |
-| 部署 | API 服务 | 腾讯云函数 |
+| LLM + Function Calling | 对话理解与工具调度 | DeepSeek（deepseek-chat） |
+| 语义匹配 | 模糊搜索 | SiliconFlow BGE (bge-large-zh-v1.5) |
+| 图像识别 | 拍照识物 | DeepSeek 多模态 |
+| 数据存储 | 商品信息持久化 | JSON 文件（items_db.json）|
+| 部署 | API 服务 | 阿里云 ECS（Nginx + Flask）|
 
 ### 4.3 数据结构
 
@@ -118,5 +126,5 @@ item {
 | 阶段 | 计划 |
 |------|------|
 | Phase 1（已完成） | MVP：发布 + 搜索 + 查看详情 |
-| Phase 2（进行中） | 图片识别 + 语义搜索升级 |
+| Phase 2（已完成） | 自托管 LLM + Function Calling 重构，DeepSeek 多模态视觉 + SiliconFlow 语义搜索 |
 | Phase 3（规划中） | 技能交换、信誉系统、拼单功能 |

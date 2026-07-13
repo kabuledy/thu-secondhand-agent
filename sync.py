@@ -11,28 +11,34 @@
 import os, sys, time
 from dotenv import load_dotenv
 
-# 从 backend/.env 加载服务器密码
+# 从 backend/.env 加载服务器配置
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend", ".env")
 load_dotenv(dotenv_path)
 
-HOST = "39.106.1.145"
+HOST = os.environ.get("SERVER_HOST", "")
 USER = "root"
 PASS = os.environ.get("SERVER_PASS", "")
-if not PASS:
-    print("❌ 未找到 SERVER_PASS，请在 backend/.env 中设置")
+if not HOST or not PASS:
+    print("❌ 请在 backend/.env 中设置 SERVER_HOST 和 SERVER_PASS")
     sys.exit(1)
-PUBLIC_BASE = "http://39.106.1.145/uploads"
+PUBLIC_BASE = f"http://{HOST}/uploads"
 LOCAL = os.path.dirname(os.path.abspath(__file__))
 REMOTE = "/opt/thu-secondhand"
 
+# 要同步的文件（排除 backend/data/ 下的交易数据）
 FILES = [
-    "chat.html",
+    "backend/api/__init__.py",
     "backend/api/agent.py",
+    "backend/api/analyze_image.py",
+    "backend/api/conversation_store.py",
+    "backend/api/database.py",
+    "backend/api/embedding.py",
+    "backend/api/image_utils.py",
     "backend/api/list_item.py",
     "backend/api/search_item.py",
+    "backend/api/storage_backend.py",
     "backend/api/tag_utils.py",
-    "backend/api/database.py",
-    "backend/api/conversation_store.py",
+    "backend/api/web_search.py",
     "backend/main.py",
     "backend/requirements.txt",
     "prompt/system_prompt.md",
