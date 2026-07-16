@@ -197,7 +197,7 @@ def list_item():
 
 **为什么有些接口有 Bearer Token 认证：**
 
-清小搭平台调用我们的 API 时，需要带上一个密码（`sk-thu-secondhand-2026`），防止别人乱调用。
+清小搭平台调用我们的 API 时，需要带上一个密码（`your_agent_api_key`），防止别人乱调用。
 
 ---
 
@@ -456,7 +456,7 @@ systemctl status thu-secondhand.service   # 查看程序运行状态
     ▼ HTTP
 清小搭平台（清华）
     │ POST /v1/chat/completions
-    │ Authorization: Bearer sk-thu-secondhand-2026
+    │ Authorization: Bearer your_agent_api_key
     ▼ HTTP
 阿里云 ECS 服务器 (YOUR_SERVER_IP)
     │

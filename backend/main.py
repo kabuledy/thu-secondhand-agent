@@ -212,11 +212,19 @@ def health_check():
 
 @app.route("/chat")
 def chat_page():
-    """提供测试页面（同源，避免图片跨域问题）"""
-    return send_from_directory(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "chat.html"
-    )
+    """提供测试页面（动态注入 API Key，避免 key 暴露在前端文件中）"""
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    chat_path = os.path.join(project_root, "chat.html")
+    try:
+        with open(chat_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # 动态注入 API Key 和服务器地址，避免写死在静态文件中
+        server_host = request.host_url.rstrip("/")
+        content = content.replace("__API_KEY__", AGENT_API_KEY)
+        content = content.replace("__SERVER_HOST__", server_host)
+        return content, 200, {"Content-Type": "text/html; charset=utf-8"}
+    except FileNotFoundError:
+        return "chat.html 不存在", 404
 
 
 @app.route("/api/list_item", methods=["POST"])
@@ -316,6 +324,72 @@ def search_by_tag_endpoint():
     })
 
 
+# ═══════════════════════════════════════════════════════════
+# 议价数据 API（供调试、数据分析、Poster 展示）
+# ═══════════════════════════════════════════════════════════
+
+@app.route("/api/bargain/stats", methods=["GET"])
+def bargain_stats():
+    """获取全平台议价统计（学术分析/Poster用）"""
+    try:
+        from api.bargain_data import get_global_stats
+        from api.price_learning import generate_global_learning_report
+        from api.bargain_data import get_all_bargain_items
+
+        stats = get_global_stats()
+        items = get_all_bargain_items()
+        if items:
+            learning = generate_global_learning_report(items)
+            stats["learning_report"] = learning.get("report")
+        return jsonify({"success": True, "stats": stats})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/bargain/item/<item_id>", methods=["GET"])
+def bargain_item_stats(item_id):
+    """获取单个商品的议价数据"""
+    try:
+        from api.bargain_data import get_bargain_stats, init_bargain_table
+        from api.price_learning import learner_from_db_record
+        from api.bargain_data import get_bargain_stats as _raw
+
+        init_bargain_table()
+        stats = get_bargain_stats(item_id)
+        if not stats:
+            return jsonify({"success": False, "error": "该商品暂无议价数据"})
+
+        # 算法分析
+        raw = _raw(item_id)  # 需要原始记录
+        # Get raw record from DB
+        import sqlite3, json, os
+        db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "items.db"
+        )
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM bargain_data WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        conn.close()
+        if row:
+            d = dict(row)
+            for field in ("sim_prices", "sim_fails", "real_prices"):
+                if isinstance(d.get(field), str):
+                    try:
+                        d[field] = json.loads(d[field])
+                    except:
+                        d[field] = [] if field != "sim_fails" else []
+            learner = learner_from_db_record(d)
+            stats["ai_analysis"] = learner.get_learning_summary()
+
+        return jsonify({"success": True, "data": stats})
+    except Exception as e:
+        import traceback
+        return jsonify({"success": False, "error": str(e),
+                        "traceback": traceback.format_exc()}), 500
+
 
 # ============================================================
 # 辅助函数
@@ -339,6 +413,15 @@ def _error_response(msg: str) -> dict:
 # 启动时初始化数据库
 from api.database import init_db
 init_db()
+# 初始化议价数据表
+try:
+    from api.bargain_data import init_bargain_table
+    init_bargain_table()
+    print("   ✅ 议价数据表已初始化")
+except ImportError:
+    print("   ⚠️ 议价模块未加载（bargain_data.py 缺失）")
+except Exception as e:
+    print(f"   ⚠️ 议价表初始化异常: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

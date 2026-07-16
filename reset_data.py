@@ -44,6 +44,7 @@ def confirm() -> bool:
     print("  将删除：")
     print("    • 所有商品信息（数据库 items 表）")
     print("    • 所有标签统计（数据库 tag_stats 表）")
+    print("    • 所有议价记录（数据库 bargain_data 表）")
     print("    • 所有上传的图片（uploads/ 目录）")
     print("  范围：本地开发环境 + 阿里云服务器")
     print("=" * 60)

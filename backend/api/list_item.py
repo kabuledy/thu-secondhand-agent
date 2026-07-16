@@ -68,6 +68,13 @@ def handle_list_item(data: dict) -> dict:
         "message": "发布成功"
     }
     """
+    # ── 安全校验：用户必须明确确认发布 ──
+    if not data.get("user_confirmed"):
+        return {
+            "success": False,
+            "error": "发布被拒绝：用户未确认。请先向用户展示完整商品信息并获取确认。"
+        }
+
     # ── 校验必填字段 ──
     name = data.get("name", "").strip()
     if not name:
@@ -93,6 +100,12 @@ def handle_list_item(data: dict) -> dict:
     if not tags:
         return {"success": False, "error": "请至少提供一个标签，如：文具、生活用品、书、电子、交通、运动、服装等"}
 
+    # ── 校验分类 ──
+    category = data.get("category", "").strip()
+    from .database import CATEGORIES
+    if category not in CATEGORIES:
+        return {"success": False, "error": f"请选择有效分类：{'、'.join(CATEGORIES)}"}
+
     # ── 构建商品对象 ──
     item_id = generate_item_id()
     now = datetime.now().isoformat()
@@ -111,7 +124,7 @@ def handle_list_item(data: dict) -> dict:
         }.get(contact_type, contact_type),
         "image_url": "",
         "image_description": "",
-        "category": data.get("category", ""),
+        "category": category,
         "price": price,
         "tags": tags,
         "status": "active",
@@ -127,6 +140,23 @@ def handle_list_item(data: dict) -> dict:
     # ── 更新标签频率统计 ──
     if tags:
         record_tags(tags)
+
+    # ── 如果提供了卖家底价，初始化议价数据 ──
+    seller_min_price_str = data.get("seller_min_price", "").strip()
+    if seller_min_price_str:
+        try:
+            seller_min_price = float(seller_min_price_str.replace("元", "").strip())
+            if seller_min_price > 0 and seller_min_price <= float(price):
+                from .bargain_data import init_item_bargain
+                init_item_bargain(
+                    item_id=item_id,
+                    item_name=name,
+                    asking_price=float(price),
+                    seller_min_price=seller_min_price,
+                    category=category
+                )
+        except (ValueError, ImportError):
+            pass  # 底价非必须，出错不影响发布
 
     # 组装发布成功回复
     tags_str = "、".join([f"#{t}" for t in tags]) if tags else "（未设置标签）"

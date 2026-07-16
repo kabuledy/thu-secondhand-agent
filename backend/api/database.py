@@ -15,6 +15,16 @@ from typing import Optional, List, Dict, Any
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 DB_PATH = os.path.join(DATA_DIR, "items.db")
 
+# 商品分类（6 类，互斥）
+CATEGORIES = [
+    "书籍文具",
+    "数码",
+    "生活家居",
+    "服饰个护",
+    "运动出行",
+    "娱乐休闲",
+]
+
 
 # ═══════════════════════════════════════════════════════════
 # 初始化
@@ -174,10 +184,11 @@ def search_items_by_tag(tag: str) -> List[dict]:
 
 
 def clear_all_items():
-    """清空所有商品数据（测试用）"""
+    """清空所有商品数据 + 议价数据（测试用）"""
     conn = get_connection()
     conn.execute("DELETE FROM items")
     conn.execute("DELETE FROM tag_stats")
+    conn.execute("DELETE FROM bargain_data")
     conn.commit()
     conn.close()
 
@@ -198,6 +209,26 @@ def record_tags(tags: List[str]):
                 INSERT INTO tag_stats (tag, count) VALUES (?, 1)
                 ON CONFLICT(tag) DO UPDATE SET count = count + 1
             """, (tag,))
+    conn.commit()
+    conn.close()
+
+
+def remove_tags(tags: List[str]):
+    """商品下架/售出后，减少标签计数，计数归零则删除"""
+    if not tags:
+        return
+    conn = get_connection()
+    for tag in tags:
+        tag = tag.strip()
+        if not tag:
+            continue
+        # 减少计数
+        conn.execute(
+            "UPDATE tag_stats SET count = count - 1 WHERE tag = ? AND count > 0",
+            (tag,)
+        )
+        # 删除计数归零的标签
+        conn.execute("DELETE FROM tag_stats WHERE tag = ? AND count <= 0", (tag,))
     conn.commit()
     conn.close()
 

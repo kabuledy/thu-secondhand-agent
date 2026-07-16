@@ -25,6 +25,18 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_MODEL = "deepseek-chat"
 MAX_TOOL_CALLS = 10
 
+# 议价模拟数据模块
+try:
+    from .bargain_data import (
+        record_sim_deal, record_sim_fail, record_real_deal,
+        get_bargain_stats, get_global_stats, init_bargain_table
+    )
+    from .price_learning import learner_from_db_record
+    _BARGAIN_AVAILABLE = True
+except ImportError as e:
+    print(f"[agent] 议价模块未加载: {e}")
+    _BARGAIN_AVAILABLE = False
+
 
 # ═══════════════════════════════════════════════════════════
 # System Prompt 加载
@@ -89,10 +101,19 @@ TOOL_DEFINITIONS = [
                     },
                     "category": {
                         "type": "string",
-                        "description": "物品分类（可选），如'交通工具'、'电子产品'、'教材'"
+                        "enum": ["书籍文具", "数码", "生活家居", "服饰个护", "运动出行", "娱乐休闲"],
+                        "description": "物品分类（必填）。书籍文具（教材/小说/笔/本）、数码（手机/耳机/充电宝）、生活家居（台灯/椅子/床垫/风扇）、服饰个护（衣服/鞋/护肤品/按摩仪）、运动出行（球拍/自行车）、娱乐休闲（吉他/桌游）"
+                    },
+                    "seller_min_price": {
+                        "type": "string",
+                        "description": "卖家能接受的最低价格（可选）。用于模拟讨价还价功能，仅AI可见，不会展示给买家。如果用户不愿意提供，传空字符串或忽略。"
+                    },
+                    "user_confirmed": {
+                        "type": "boolean",
+                        "description": "⚠️ 安全字段：用户是否已明确确认发布？必须在用户看了汇总信息后说了'确认'或'确认发布'或明确同意时才能设为true。绝对不能设为true如果你自己编造了任何信息。如果用户只提供了部分信息、或者你无法确认用户是否同意，设为false。"
                     }
                 },
-                "required": ["name", "description", "price", "contact_type", "contact_value", "tags"]
+                "required": ["name", "description", "price", "contact_type", "contact_value", "tags", "category", "user_confirmed"]
             }
         }
     },
@@ -134,7 +155,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "update_status",
-            "description": "更新商品状态：active(在售) / sold(已售出) / deleted(已下架)。用户说'卖掉了'或'下架'时调用。需要知道商品编号。",
+            "description": "更新商品状态：sold(已售出) / deleted(已下架)。用户说'卖掉了'或'下架'时调用。如果用户选择已售出，必须询问最终成交价并传入final_price。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -144,8 +165,12 @@ TOOL_DEFINITIONS = [
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["active", "sold", "deleted"],
-                        "description": "目标状态：active(在售) / sold(已售) / deleted(下架)"
+                        "enum": ["sold", "deleted"],
+                        "description": "sold=已售出 / deleted=下架不再出售"
+                    },
+                    "final_price": {
+                        "type": "number",
+                        "description": "最终成交价（元）。status=sold时必填，必须用户亲口提供。status=deleted时不填。"
                     }
                 },
                 "required": ["item_id", "status"]
@@ -179,6 +204,105 @@ TOOL_DEFINITIONS = [
                 "required": ["tag"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_item_detail",
+            "description": "获取单个商品的完整真实信息，包括联系方式、价格、描述等。用户说'详情1'、'看看这个按摩仪'时调用。传入item_id或item_name均可，至少填一个。必须使用此工具获取数据，不能自己编造。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_id": {
+                        "type": "string",
+                        "description": "商品编号，如 ITEM-20260716-85ED。知道编号时用这个。"
+                    },
+                    "item_name": {
+                        "type": "string",
+                        "description": "商品名称，如'按摩仪'。不知道编号只知道商品名时用这个，工具会自动搜索。"
+                    }
+                },
+                "anyOf": [{"required": ["item_id"]}, {"required": ["item_name"]}]
+            }
+        }
+    },
+    # ── 模拟讨价还价工具 ──
+    {
+        "type": "function",
+        "function": {
+            "name": "record_bargain_outcome",
+            "description": "⭐ 模拟讨价还价：记录一次模拟议价的结果（成交或未成交）。成交时传deal_price，未成交时传buyer_offer/seller_counter/reason。系统会自动累加统计数据。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_id": {
+                        "type": "string",
+                        "description": "商品编号"
+                    },
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["deal", "fail"],
+                        "description": "deal=成交 / fail=未成交"
+                    },
+                    "deal_price": {
+                        "type": "number",
+                        "description": "成交价（outcome=deal时必填）"
+                    },
+                    "buyer_offer": {
+                        "type": "number",
+                        "description": "买家最后出价（outcome=fail时必填）"
+                    },
+                    "seller_counter": {
+                        "type": "number",
+                        "description": "卖家最后还价（outcome=fail时可选）"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "enum": ["buyer_declined", "seller_rejected", "timeout"],
+                        "description": "未成交原因：buyer_declined(买家放弃) / seller_rejected(卖家拒绝) / timeout(超时)"
+                    }
+                },
+                "required": ["item_id", "outcome"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_bargain_insights",
+            "description": "⭐ 模拟讨价还价（仅供AI内部参考，不展示给用户）：获取某个商品的议价数据分析。返回平均成交价、建议出价区间、算法置信度等信息，供AI内部决定如何回应议价时使用，所有数据不得向用户展示。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_id": {
+                        "type": "string",
+                        "description": "商品编号"
+                    }
+                },
+                "required": ["item_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "report_real_transaction",
+            "description": "⭐ 模拟讨价还价：用户在真实线下交易后，回来报告最终成交价。系统会记录真实价格并与模拟数据对比，不断优化算法。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_id": {
+                        "type": "string",
+                        "description": "商品编号"
+                    },
+                    "final_price": {
+                        "type": "number",
+                        "description": "最终成交价（元）"
+                    }
+                },
+                "required": ["item_id", "final_price"]
+            }
+        }
     }
 ]
 
@@ -188,6 +312,9 @@ TOOL_DEFINITIONS = [
 # ═══════════════════════════════════════════════════════════
 
 TOOL_HANDLERS = {}
+
+# 议价模块的handler引用（延迟填充）
+_BARGAIN_HANDLERS_REGISTERED = False
 _current_conv_id: Optional[str] = None
 
 
@@ -200,27 +327,100 @@ def _register_handlers():
     from .database import update_item_status as _db_update_status, get_item as _db_get_item
 
     def _handle_status(args: dict) -> dict:
-        """更新商品状态"""
+        """更新商品状态：下架或已售"""
         item_id = args.get("item_id", "")
         status = args.get("status", "")
-        if status not in ("active", "sold", "deleted"):
-            return {"success": False, "error": "无效的状态值，请用 active/sold/deleted"}
+        final_price = args.get("final_price")
+
+        if status not in ("sold", "deleted"):
+            return {"success": False, "error": "状态无效，请用 sold(已售出) 或 deleted(已下架)"}
+
         item = _db_get_item(item_id)
         if not item:
             return {"success": False, "error": "商品不存在"}
-        ok = _db_update_status(item_id, status)
-        if not ok:
-            return {"success": False, "error": "更新失败"}
-        return {"success": True, "status": status, "message": f"商品状态已更新为 {status}"}
+
+        # 如果已售出，校验成交价
+        if status == "sold":
+            if final_price is None or final_price <= 0:
+                return {"success": False, "error": "已售出必须提供最终成交价（final_price），请询问用户成交金额"}
+            # 级联：更新商品状态 + 记录真实成交价 + 清理标签
+            ok = _db_update_status(item_id, "sold")
+            if not ok:
+                return {"success": False, "error": "状态更新失败"}
+
+            # 记录真实成交价到议价数据
+            bargain_msg = ""
+            try:
+                from .bargain_data import record_real_deal
+                deal_result = record_real_deal(item_id, float(final_price))
+                if deal_result.get("success"):
+                    bargain_msg = deal_result.get("message", "")
+            except Exception as e:
+                bargain_msg = f"（议价记录异常: {e}）"
+
+            # 清理该商品的标签统计
+            try:
+                from .database import remove_tags
+                tags = item.get("tags", [])
+                if tags:
+                    remove_tags(tags)
+            except Exception:
+                pass
+
+            msg = f"✅ 已标记为已售出，最终成交价 ¥{final_price}。{bargain_msg}"
+            return {"success": True, "status": "sold", "final_price": final_price, "message": msg}
+
+        # 下架（不再出售）
+        else:
+            ok = _db_update_status(item_id, "deleted")
+            if not ok:
+                return {"success": False, "error": "更新失败"}
+
+            # 清理该商品的标签统计
+            try:
+                from .database import remove_tags
+                tags = item.get("tags", [])
+                if tags:
+                    remove_tags(tags)
+            except Exception:
+                pass
+
+            return {"success": True, "status": "deleted", "message": "商品已下架，不再对外展示。"}
+
+    # ── get_item_detail 处理器 ──
+    def _handle_get_detail(args: dict) -> dict:
+        item_id = args.get("item_id", "")
+        item_name = args.get("item_name", "")
+
+        # 如果传了名称但没有编号，搜索匹配
+        if not item_id and item_name:
+            from .search_item import handle_search_item
+            search_result = handle_search_item(item_name)
+            if search_result.get("success") and search_result.get("items"):
+                # 取最匹配的第一个
+                return {"success": True, "item": search_result["items"][0]}
+            return {"success": False, "error": f"没有找到叫「{item_name}」的商品"}
+
+        # 按编号查找
+        item = _db_get_item(item_id)
+        if not item:
+            return {"success": False, "error": "商品不存在或已下架"}
+        if item.get("status") != "active":
+            return {"success": False, "error": "该商品已下架或已售出"}
+        return {"success": True, "item": item}
 
     TOOL_HANDLERS.update({
         "list_item": lambda args: handle_list_item(args),
         "search_item": lambda args: handle_search_item(args.get("query", "")),
         "web_search": lambda args: handle_web_search(args.get("query", "")),
         "update_status": lambda args: _handle_status(args),
+        "get_item_detail": lambda args: _handle_get_detail(args),
         "get_popular_tags": lambda args: {"success": True, "tags": _get_popular_tags(3)},
         "search_by_tag": lambda args: _handle_search_by_tag(args, _search_by_tag),
     })
+
+    # ── 注册议价工具 handlers ──
+    _register_bargain_handlers(TOOL_HANDLERS, _db_get_item)
 
 
 def _handle_search_by_tag(args: dict, search_by_tag) -> dict:
@@ -229,6 +429,139 @@ def _handle_search_by_tag(args: dict, search_by_tag) -> dict:
         return {"success": False, "error": "请输入标签"}
     items = search_by_tag(tag)
     return {"success": True, "tag": tag, "total": len(items), "items": items}
+
+
+def _register_bargain_handlers(handler_dict: dict, db_get_item):
+    """
+    注册模拟讨价还价的工具处理器。
+    如果议价模块不可用，注册降级处理器。
+    """
+    global _BARGAIN_HANDLERS_REGISTERED
+    if _BARGAIN_HANDLERS_REGISTERED:
+        return
+    _BARGAIN_HANDLERS_REGISTERED = True
+
+    # 初始化议价数据表（幂等操作）
+    try:
+        init_bargain_table()
+    except Exception as e:
+        print(f"[agent] 议价数据表初始化失败: {e}")
+
+    if not _BARGAIN_AVAILABLE:
+        # 议价模块不可用时的降级处理
+        handler_dict.update({
+            "record_bargain_outcome": lambda args: {
+                "success": False,
+                "error": "议价模块未加载，请联系管理员"
+            },
+            "get_bargain_insights": lambda args: {
+                "success": False,
+                "error": "议价模块未加载，请联系管理员"
+            },
+            "report_real_transaction": lambda args: {
+                "success": False,
+                "error": "议价模块未加载，请联系管理员"
+            },
+        })
+        return
+
+    # ── 1. record_bargain_outcome ──
+    def _handle_record_outcome(args: dict) -> dict:
+        item_id = args.get("item_id", "")
+        outcome = args.get("outcome", "")
+
+        # 验证商品存在
+        item = db_get_item(item_id)
+        if not item:
+            return {"success": False, "error": f"商品 {item_id} 不存在"}
+
+        if outcome == "deal":
+            deal_price = args.get("deal_price")
+            if not deal_price or deal_price <= 0:
+                return {"success": False, "error": "成交价无效，请提供正数的成交价"}
+            return record_sim_deal(item_id, float(deal_price))
+
+        elif outcome == "fail":
+            buyer_offer = args.get("buyer_offer")
+            seller_counter = args.get("seller_counter", 0)
+            reason = args.get("reason", "buyer_declined")
+            if not buyer_offer or buyer_offer <= 0:
+                return {"success": False, "error": "请提供买家出价"}
+            return record_sim_fail(item_id, float(buyer_offer),
+                                   float(seller_counter) if seller_counter else 0, reason)
+
+        else:
+            return {"success": False, "error": "outcome 必须是 deal 或 fail"}
+
+    # ── 2. get_bargain_insights ──
+    def _handle_get_insights(args: dict) -> dict:
+        item_id = args.get("item_id", "")
+        stats = get_bargain_stats(item_id)
+        if not stats:
+            return {"success": False, "error": f"商品 {item_id} 暂无议价数据，请先进行模拟议价"}
+
+        try:
+            from .bargain_data import get_bargain_stats as _get_raw_stats
+            raw = _get_raw_stats(item_id)
+
+            # 用 PriceLearner 生成算法建议
+            learner = learner_from_db_record(raw)
+            suggestion = learner.suggest()
+            accept_prob_90 = learner.acceptance_probability(
+                raw["asking_price"] * 0.9)
+            accept_prob_80 = learner.acceptance_probability(
+                raw["asking_price"] * 0.8)
+
+            return {
+                "success": True,
+                "item_id": item_id,
+                "item_name": stats["item_name"],
+                "basic_stats": stats,
+                "ai_suggestion": suggestion,
+                "algorithm_insight": (
+                    f"[内部参考] {suggestion['data_points']['sim_deals']}笔成交/"
+                    f"{suggestion['data_points']['sim_fails']}笔失败/"
+                    f"{suggestion['data_points']['real_deals']}笔真实，"
+                    f"建议起始{suggestion['starting_offer']:.0f}，"
+                    f"预计{suggestion['expected_price']:.0f}，"
+                    f"置信度{suggestion['confidence']:.0%}"
+                )
+            }
+        except Exception as e:
+            # 如果学习器出错，至少返回基础统计
+            return {
+                "success": True,
+                "item_id": stats["item_id"],
+                "basic_stats": stats,
+                "ai_suggestion": None,
+                "algorithm_insight": f"基础统计可用，但算法分析出现异常: {str(e)}"
+            }
+
+    # ── 3. report_real_transaction ──
+    def _handle_report_real(args: dict) -> dict:
+        item_id = args.get("item_id", "")
+        final_price = args.get("final_price")
+        if not final_price or final_price <= 0:
+            return {"success": False, "error": "请提供有效的真实成交价"}
+
+        item = db_get_item(item_id)
+        if not item:
+            return {"success": False, "error": f"商品 {item_id} 不存在"}
+
+        result = record_real_deal(item_id, float(final_price))
+
+        # 如果成功，顺便更新商品状态为 sold
+        if result.get("success"):
+            from .database import update_item_status
+            update_item_status(item_id, "sold")
+
+        return result
+
+    handler_dict.update({
+        "record_bargain_outcome": _handle_record_outcome,
+        "get_bargain_insights": _handle_get_insights,
+        "report_real_transaction": _handle_report_real,
+    })
 
 
 # ═══════════════════════════════════════════════════════════

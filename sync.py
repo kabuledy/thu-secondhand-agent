@@ -30,11 +30,13 @@ FILES = [
     "backend/api/__init__.py",
     "backend/api/agent.py",
     "backend/api/analyze_image.py",
+    "backend/api/bargain_data.py",
     "backend/api/conversation_store.py",
     "backend/api/database.py",
     "backend/api/embedding.py",
     "backend/api/image_utils.py",
     "backend/api/list_item.py",
+    "backend/api/price_learning.py",
     "backend/api/search_item.py",
     "backend/api/storage_backend.py",
     "backend/api/tag_utils.py",
@@ -42,6 +44,10 @@ FILES = [
     "backend/main.py",
     "backend/requirements.txt",
     "prompt/system_prompt.md",
+    "chat.html",
+    "query_data.py",
+    "docs/categories.md",
+    "reset_data.py",
 ]
 
 
