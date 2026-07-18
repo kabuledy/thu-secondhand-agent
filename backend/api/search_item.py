@@ -75,14 +75,17 @@ def parse_query(query: str) -> dict:
                   "和", "与", "或者", "大约", "左右", "预算", "以内", "价格",
                   "需要", "可以", "什么", "怎么", "这个", "那个", "还有"}
 
-    # 分词（中文按字粒度 + 常见双字词提取）
-    # 简单实现：按空格分离 + 2-4字连续汉字作为候选词
-    tokens = re.findall(r'[一-鿿]{2,4}', query_lower)
-    for token in tokens:
-        if token not in stop_words and len(token) >= 2:
-            keywords.append(token)
-
-    # 去重
+    # 分词（中文：2字滑动窗口 + 3-4字组合）
+    tokens = set()
+    for i in range(len(query_lower) - 1):
+        win2 = query_lower[i:i+2]
+        if all('一' <= c <= '鿿' for c in win2) and win2 not in stop_words:
+            tokens.add(win2)
+    for m in re.finditer(r'[一-鿿]{3,4}', query_lower):
+        t = m.group()
+        if t not in stop_words:
+            tokens.add(t)
+    keywords = list(tokens)
     keywords = list(dict.fromkeys(keywords))
 
     return {

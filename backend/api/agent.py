@@ -258,8 +258,8 @@ TOOL_DEFINITIONS = [
                     },
                     "reason": {
                         "type": "string",
-                        "enum": ["buyer_declined", "seller_rejected", "timeout"],
-                        "description": "未成交原因：buyer_declined(买家放弃) / seller_rejected(卖家拒绝) / timeout(超时)"
+                        "enum": ["buyer_declined", "seller_rejected", "seller_held_firm", "timeout"],
+                        "description": "未成交原因：buyer_declined(买家放弃) / seller_rejected(卖家拒绝，出价低于底价) / seller_held_firm(卖家坚持心理价位，出价高于底价但低于算法估值) / timeout(超时)"
                     }
                 },
                 "required": ["item_id", "outcome"]
@@ -507,21 +507,72 @@ def _register_bargain_handlers(handler_dict: dict, db_get_item):
             # 用 PriceLearner 生成算法建议
             learner = learner_from_db_record(raw)
             suggestion = learner.suggest()
+
+            # ── 如果本商品无数据，尝试用同名旧商品 + 分类数据补充 ──
+            data_sources = ["本商品"]
+            if not raw.get("sim_count") and not raw.get("real_count"):
+                # 获取商品名称和分类
+                item = db_get_item(item_id)
+                if item:
+                    item_name = item.get("name", "")
+                    category = item.get("category", "")
+
+                    # 三级①：同名商品（权重高）
+                    from .bargain_data import search_bargain_by_name, get_items_by_category
+                    same_name = search_bargain_by_name(item_name, exclude_id=item_id)
+                    same_name_count = 0
+                    same_name_items = set()
+
+                    for rec in same_name:
+                        for p in rec.get("sim_prices", []):
+                            learner.add_sim_deal(p)
+                            same_name_count += 1
+                        for p in rec.get("real_prices", []):
+                            learner.add_real_deal(p)
+                            same_name_count += 1
+                        same_name_items.add(rec["item_id"])
+
+                    if same_name_count > 0:
+                        data_sources.append(f"同名{len(same_name)}件{same_name_count}笔")
+
+                    # 三级②：同类商品（权重中，取均价×2作为额外参考点）
+                    if category:
+                        cat_records = get_items_by_category(category)
+                        cat_prices = []
+                        for rec in cat_records:
+                            if rec["item_id"] == item_id:
+                                continue
+                            if rec["item_id"] in same_name_items:
+                                continue  # 已在同名中计入，不重复
+                            cat_prices.extend(rec.get("sim_prices", []))
+                            cat_prices.extend(rec.get("real_prices", []))
+
+                        if cat_prices:
+                            cat_avg = sum(cat_prices) / len(cat_prices)
+                            # 分类均价作为 2 条模拟数据加入（权重中等）
+                            learner.add_sim_deal(cat_avg)
+                            learner.add_sim_deal(cat_avg)
+                            data_sources.append(f"同类{len(cat_prices)}笔均¥{cat_avg:.0f}")
+
+                # 重新计算建议（数据已变化）
+                suggestion = learner.suggest()
+
             accept_prob_90 = learner.acceptance_probability(
                 raw["asking_price"] * 0.9)
             accept_prob_80 = learner.acceptance_probability(
                 raw["asking_price"] * 0.8)
 
+            source_str = " + ".join(data_sources)
+
             return {
                 "success": True,
                 "item_id": item_id,
                 "item_name": stats["item_name"],
+                "data_sources": source_str,
                 "basic_stats": stats,
                 "ai_suggestion": suggestion,
                 "algorithm_insight": (
-                    f"[内部参考] {suggestion['data_points']['sim_deals']}笔成交/"
-                    f"{suggestion['data_points']['sim_fails']}笔失败/"
-                    f"{suggestion['data_points']['real_deals']}笔真实，"
+                    f"[内部参考] 来源{source_str}，"
                     f"建议起始{suggestion['starting_offer']:.0f}，"
                     f"预计{suggestion['expected_price']:.0f}，"
                     f"置信度{suggestion['confidence']:.0%}"

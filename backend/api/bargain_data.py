@@ -390,6 +390,39 @@ def get_all_categories() -> List[str]:
     return [r["category"] for r in rows]
 
 
+def search_bargain_by_name(name: str, exclude_id: str = None) -> List[dict]:
+    """
+    搜索商品名称包含指定关键词的议价记录。
+    用于新商品冷启动时查找同名旧商品的数据。
+
+    参数：
+      name:      商品名称（如"离散数学"）
+      exclude_id: 排除某个 item_id（避免自匹配）
+
+    返回：有数据的议价记录列表（sim_count>0 或 real_count>0）
+    """
+    conn = _get_conn()
+    like_pattern = f"%{name}%"
+    if exclude_id:
+        rows = conn.execute(
+            "SELECT * FROM bargain_data "
+            "WHERE item_name LIKE ? AND item_id != ? "
+            "AND (sim_count > 0 OR real_count > 0) "
+            "ORDER BY updated_at DESC",
+            (like_pattern, exclude_id)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM bargain_data "
+            "WHERE item_name LIKE ? "
+            "AND (sim_count > 0 OR real_count > 0) "
+            "ORDER BY updated_at DESC",
+            (like_pattern,)
+        ).fetchall()
+    conn.close()
+    return [_row_to_dict(r) for r in rows]
+
+
 # ═══════════════════════════════════════════════════════════
 # 获取全局统计（Poster/R&D 用）
 # ═══════════════════════════════════════════════════════════

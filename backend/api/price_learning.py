@@ -163,7 +163,7 @@ class PriceLearner:
         # 我们用它来向上修正最低可接受价格
         implied_floor = self.seller_min_price
         for fail in self.sim_fails:
-            if fail["reason"] == "seller_rejected":
+            if fail["reason"] in ("seller_rejected", "seller_held_firm"):
                 # 卖家拒绝了买家的出价 → 底价高于这个出价
                 implied_floor = max(implied_floor, fail["buyer_offer"])
 

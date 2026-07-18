@@ -46,7 +46,11 @@ FILES = [
     "prompt/system_prompt.md",
     "chat.html",
     "query_data.py",
-    "docs/categories.md",
+    "generate_demo_data.py",
+    "poster_multi_run.py",
+    "poster_charts.py",
+    "plot_charts.py",
+    "plot_multi_charts.py",
     "reset_data.py",
 ]
 

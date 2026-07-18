@@ -70,8 +70,15 @@ thu-secondhand-agent/          ← 项目主目录（你电脑上的文件夹）
 │       ├── search_item.py     ← "搜索商品"功能
 │       ├── web_search.py      ← "联网搜索"功能
 │       ├── database.py        ← "数据库操作"功能
+│       ├── bargain_data.py    ← "议价数据"功能（存储模拟+真实交易记录）
+│       ├── price_learning.py  ← "价格学习算法"（PriceLearner贝叶斯在线学习）
 │       ├── embedding.py       ← "语义搜索"功能
-│       └── conversation_store.py  ← "对话记忆"功能
+│       ├── tag_utils.py       ← "标签统计"功能
+│       ├── image_utils.py     ← "图片处理"功能
+│       ├── storage_backend.py ← "文件存储"功能
+│       ├── analyze_image.py   ← "图片分析"功能
+│       ├── conversation_store.py  ← "对话记忆"功能
+│       └── __init__.py        ← 模块初始化
 │
 ├── prompt/
 │   └── system_prompt.md       ← AI的"性格说明书"（灵魂文件）
@@ -79,10 +86,16 @@ thu-secondhand-agent/          ← 项目主目录（你电脑上的文件夹）
 ├── sync.py                    ← 一键上传代码到云服务器的工具
 ├── sync_data.py               ← 一键同步数据到云服务器的工具
 ├── reset_data.py              ← 一键清空所有数据的工具
+├── query_data.py              ← 查询数据库（商品+议价数据）
 ├── chat.html                  ← 在浏览器里测试聊天的页面
 │
+├── docs/
+│   ├── categories.md          ← 6大商品分类体系文档
+│   └── ...                    ← 其他学习笔记
+│
 └── data/
-    └── items.db               ← SQLite 数据库文件（商品都存在这里）
+    ├── items.db               ← SQLite 数据库（商品表+议价表+标签表）
+    └── uploads/               ← 用户上传的图片文件
 ```
 
 ---
@@ -526,4 +539,4 @@ python reset_data.py
 ---
 
 *本项目为清华大学人工智能创新大赛参赛作品*
-*最后更新：2026年7月4日*
+*最后更新：2026年7月17日*

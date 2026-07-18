@@ -22,6 +22,7 @@ docs/
 # ── 比赛材料 ──
 competition/
 作者注释.txt
+poster_data/
 
 # ── 本地测试页面（含占位符密钥）──
 chat.html
