@@ -508,54 +508,57 @@ def _register_bargain_handlers(handler_dict: dict, db_get_item):
             learner = learner_from_db_record(raw)
             suggestion = learner.suggest()
 
-            # ── 如果本商品无数据，尝试用同名旧商品 + 分类数据补充 ──
+            # ── 三级数据融合（始终触发，同类影响力随自身数据超线性衰减） ──
             data_sources = ["本商品"]
-            if not raw.get("sim_count") and not raw.get("real_count"):
-                # 获取商品名称和分类
-                item = db_get_item(item_id)
-                if item:
-                    item_name = item.get("name", "")
-                    category = item.get("category", "")
 
-                    # 三级①：同名商品（权重高）
-                    from .bargain_data import search_bargain_by_name, get_items_by_category
-                    same_name = search_bargain_by_name(item_name, exclude_id=item_id)
-                    same_name_count = 0
-                    same_name_items = set()
+            item = db_get_item(item_id)
+            if item:
+                item_name = item.get("name", "")
+                category = item.get("category", "")
 
-                    for rec in same_name:
-                        for p in rec.get("sim_prices", []):
-                            learner.add_sim_deal(p)
-                            same_name_count += 1
-                        for p in rec.get("real_prices", []):
-                            learner.add_real_deal(p)
-                            same_name_count += 1
-                        same_name_items.add(rec["item_id"])
+                from .bargain_data import search_bargain_by_name, get_items_by_category
 
-                    if same_name_count > 0:
-                        data_sources.append(f"同名{len(same_name)}件{same_name_count}笔")
+                # 三级①：同名商品（权重最高，直接复用全部数据）
+                same_name = search_bargain_by_name(item_name, exclude_id=item_id)
+                same_name_count = 0
+                same_name_items = set()
 
-                    # 三级②：同类商品（权重中，取均价×2作为额外参考点）
-                    if category:
-                        cat_records = get_items_by_category(category)
-                        cat_prices = []
-                        for rec in cat_records:
-                            if rec["item_id"] == item_id:
-                                continue
-                            if rec["item_id"] in same_name_items:
-                                continue  # 已在同名中计入，不重复
-                            cat_prices.extend(rec.get("sim_prices", []))
-                            cat_prices.extend(rec.get("real_prices", []))
+                for rec in same_name:
+                    for p in rec.get("sim_prices", []):
+                        learner.add_sim_deal(p)
+                        same_name_count += 1
+                    for p in rec.get("real_prices", []):
+                        learner.add_real_deal(p)
+                        same_name_count += 1
+                    same_name_items.add(rec["item_id"])
 
-                        if cat_prices:
-                            cat_avg = sum(cat_prices) / len(cat_prices)
-                            # 分类均价作为 2 条模拟数据加入（权重中等）
-                            learner.add_sim_deal(cat_avg)
-                            learner.add_sim_deal(cat_avg)
-                            data_sources.append(f"同类{len(cat_prices)}笔均¥{cat_avg:.0f}")
+                if same_name_count > 0:
+                    data_sources.append(f"同名{len(same_name)}件{same_name_count}笔")
 
-                # 重新计算建议（数据已变化）
-                suggestion = learner.suggest()
+                # 三级②：同类商品（超线性衰减——自身数据越多，同类影响消失得越快）
+                if category:
+                    cat_records = get_items_by_category(category)
+                    cat_prices = []
+                    for rec in cat_records:
+                        if rec["item_id"] == item_id:
+                            continue
+                        if rec["item_id"] in same_name_items:
+                            continue  # 已在同名中计入，不重复
+                        cat_prices.extend(rec.get("sim_prices", []))
+                        cat_prices.extend(rec.get("real_prices", []))
+
+                    if cat_prices:
+                        cat_avg = sum(cat_prices) / len(cat_prices)
+                        # repeat = max(0, 5 - n_self^1.5)：自身数据(含同名)越多，同类权重加速归零
+                        n_self = len(learner.sim_prices) + len(learner.real_prices) * 2
+                        repeat = max(0, round(5 - n_self ** 1.5))
+                        if repeat > 0:
+                            for _ in range(repeat):
+                                learner.add_sim_deal(cat_avg)
+                            data_sources.append(f"同类{len(cat_prices)}笔均¥{cat_avg:.0f}×{repeat}")
+
+            # 重新计算建议（包含三级融合后的所有数据）
+            suggestion = learner.suggest()
 
             accept_prob_90 = learner.acceptance_probability(
                 raw["asking_price"] * 0.9)

@@ -137,26 +137,27 @@ class PriceLearner:
             return
         self._dirty = False
 
-        # ── 1. 收集所有有效数据并赋予权重 ──
-        weighted_sum = 0.0
-        total_weight = 0.0
-
-        # 模拟成交价（权重 1.0）
-        for p in self.sim_prices:
-            weighted_sum += p * 1.0
-            total_weight += 1.0
-
-        # 真实成交价（权重 real_weight = 2.0）
+        # ── 1. 构建有序价格序列用于 EWMA ──
+        # 真实成交价每条重复两次，实现 real_weight = 2.0 的效果
+        real_seq = []
         for p in self.real_prices:
-            weighted_sum += p * self.real_weight
-            total_weight += self.real_weight
+            real_seq.append(p)
+            real_seq.append(p)
 
-        # ── 2. 融合先验知识（卖家底价和标价）──
-        # 先验权重随数据量增加而减小
-        prior_weight = max(1.0, 5.0 - total_weight * 0.5)
-        if prior_weight > 0:
-            weighted_sum += self.prior_mean * prior_weight
-            total_weight += prior_weight
+        prices_seq = list(self.sim_prices) + real_seq
+
+        # ── 2. EWMA 计算 ──
+        # 以先验均值（底价与标价中点）作为 EWMA 的初始值
+        #   → 零数据时自然回退到底价标价的中点
+        #   → 有数据时逐步被真实观测「拉走」
+        #   → EWMA 的指数衰减特性让先验初始值随数据增多自动消退
+        if prices_seq:
+            ewma = self.prior_mean
+            for p in prices_seq:
+                ewma = self.ewma_alpha * p + (1 - self.ewma_alpha) * ewma
+            market_mean = ewma
+        else:
+            market_mean = self.prior_mean
 
         # ── 3. 处理失败记录的隐含下界 ──
         # 如果买家出价 X 被卖家拒绝 → 卖家底价 > X
@@ -167,17 +168,17 @@ class PriceLearner:
                 # 卖家拒绝了买家的出价 → 底价高于这个出价
                 implied_floor = max(implied_floor, fail["buyer_offer"])
 
-        # 如果失败记录隐含的下界高于加权平均 → 取平均
-        market_mean = weighted_sum / total_weight if total_weight > 0 else self.prior_mean
-
         # ── 4. 最终价格估算 ──
         # 结合市场平均和隐含下界（下界作为硬约束）
-        self.estimated_mean = max(market_mean, implied_floor + 5)
+        # buffer = 先验区间的 4%，至少 2 元（避免小商品 +5 太夸张）
+        implied_buffer = max(2.0, self.prior_range * 0.04)
+        self.estimated_mean = max(market_mean, implied_floor + implied_buffer)
         # 确保不超过标价
         self.estimated_mean = min(self.estimated_mean, self.asking_price)
 
         # ── 5. 置信度计算 ──
         total_points = len(self.sim_prices) + len(self.real_prices) * 2
+        prior_weight = max(1.0, 5.0 - total_points * 0.5)
         n = total_points + prior_weight * 0.3  # 有效样本数
 
         # 数据量越大越自信，最多到 0.95
