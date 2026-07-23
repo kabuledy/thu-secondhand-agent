@@ -303,6 +303,28 @@ TOOL_DEFINITIONS = [
                 "required": ["item_id", "final_price"]
             }
         }
+    },
+    # ── 🔬 物理成色评估工具（新增） ──
+    {
+        "type": "function",
+        "function": {
+            "name": "assess_item_condition",
+            "description": "🔬 物理成色评估（Physical Sensing）：分析用户最近上传的照片，返回物品名称和量化的物理成色评分（0-100）。调用时不需要传image_url，系统自动使用用户最近上传的照片。在卖家上传了照片后、或在模拟议价前，**必须调用此工具**来感知物品的实物状况。评分会自动关联到该商品并影响 PriceLearner 估值。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_url": {
+                        "type": "string",
+                        "description": "物品照片的URL（可选，不填则自动使用用户最近上传的照片）"
+                    },
+                    "item_id": {
+                        "type": "string",
+                        "description": "要评估的商品编号（可选，传入后评分会自动关联到该商品）"
+                    }
+                },
+                "required": []
+            }
+        }
     }
 ]
 
@@ -316,6 +338,10 @@ TOOL_HANDLERS = {}
 # 议价模块的handler引用（延迟填充）
 _BARGAIN_HANDLERS_REGISTERED = False
 _current_conv_id: Optional[str] = None
+
+# 暂存每个对话最新上传的图片 URL（供 assess_item_condition handler 使用）
+# 存 dict: {"public_url": "...", "base64_url": "..."}，因为 Qwen-VL-Max 只能用 base64 data URL
+_pending_image_urls: Dict[str, dict] = {}
 
 
 def _register_handlers():
@@ -462,8 +488,16 @@ def _register_bargain_handlers(handler_dict: dict, db_get_item):
                 "success": False,
                 "error": "议价模块未加载，请联系管理员"
             },
+            "assess_item_condition": lambda args: {
+                "success": False,
+                "error": "议价模块未加载，请联系管理员"
+            },
         })
         return
+
+    # 导入物理成色评估
+    from .analyze_image import assess_physical_condition
+    from .bargain_data import record_item_condition, get_item_condition
 
     # ── 1. record_bargain_outcome ──
     def _handle_record_outcome(args: dict) -> dict:
@@ -506,6 +540,13 @@ def _register_bargain_handlers(handler_dict: dict, db_get_item):
 
             # 用 PriceLearner 生成算法建议
             learner = learner_from_db_record(raw)
+
+            # ── 🔬 注入物理成色数据（如果有）──
+            condition_data = get_item_condition(item_id)
+            if condition_data:
+                learner.condition_score = condition_data.get("condition_score")
+                learner.vision_confidence = condition_data.get("vision_confidence")
+
             suggestion = learner.suggest()
 
             # ── 三级数据融合（始终触发，同类影响力随自身数据超线性衰减） ──
@@ -567,6 +608,13 @@ def _register_bargain_handlers(handler_dict: dict, db_get_item):
 
             source_str = " + ".join(data_sources)
 
+            # 物理成色信息（如果有）
+            condition_note = ""
+            if suggestion.get("physical_condition") and suggestion["physical_condition"]["condition_adjustment_applied"]:
+                cs = suggestion["physical_condition"]["condition_score"]
+                vc = suggestion["physical_condition"]["vision_confidence"]
+                condition_note = f"，物理成色{cs}分(置信{vc:.0%})"
+
             return {
                 "success": True,
                 "item_id": item_id,
@@ -575,7 +623,7 @@ def _register_bargain_handlers(handler_dict: dict, db_get_item):
                 "basic_stats": stats,
                 "ai_suggestion": suggestion,
                 "algorithm_insight": (
-                    f"[内部参考] 来源{source_str}，"
+                    f"[内部参考] 来源{source_str}{condition_note}，"
                     f"建议起始{suggestion['starting_offer']:.0f}，"
                     f"预计{suggestion['expected_price']:.0f}，"
                     f"置信度{suggestion['confidence']:.0%}"
@@ -611,10 +659,75 @@ def _register_bargain_handlers(handler_dict: dict, db_get_item):
 
         return result
 
+    # ── 4. 🔬 assess_item_condition ──
+    def _handle_assess_condition(args: dict) -> dict:
+        """
+        物理成色评估：分析物品照片，返回量化的成色评分。
+        """
+        image_url = args.get("image_url", "")
+        item_id = args.get("item_id", "")
+
+        # 如果 AI 没传 URL，尝试用当前对话最近上传的图片
+        if not image_url and _current_conv_id:
+            pending = _pending_image_urls.get(_current_conv_id, "")
+            if isinstance(pending, dict):
+                # 优先用 base64_url（Qwen-VL-Max 只能内嵌图片数据，不能从外网下载）
+                image_url = pending.get("base64_url") or pending.get("public_url", "")
+            else:
+                image_url = pending  # 兼容旧格式（纯字符串 public_url）
+        if not image_url:
+            return {"success": False, "error": "未找到图片，请先上传物品照片后再试"}
+
+        # 调用视觉分析（Qwen-VL-Max）
+        condition_result = assess_physical_condition(image_url)
+
+        # 如果传了商品编号，自动关联持久化
+        if item_id and condition_result.get("success"):
+            record_item_condition(
+                item_id=item_id,
+                condition_score=condition_result["condition_score"],
+                vision_confidence=condition_result["vision_confidence"],
+                condition_detail=condition_result.get("condition_detail"),
+            )
+
+        # 添加人类可读的总结 + 注明哪些信息未识别
+        if condition_result.get("success"):
+            # 非物品图片处理
+            if condition_result.get("is_sellable_item") is False:
+                note = condition_result.get("item_type_note", "看起来不是二手物品的照片")
+                condition_result["_summary"] = (
+                    f"📷 图片分析完成：{note}"
+                )
+                return condition_result
+
+            dd = condition_result.get("description_data", {})
+            cd = condition_result.get("condition_detail", {})
+            score = condition_result["condition_score"]
+            name = dd.get("item_name", "未知物品")
+            color = dd.get("color", "未知")
+            wear = {"none": "无明显磨损", "minor": "轻微使用痕迹",
+                     "moderate": "正常使用痕迹", "severe": "明显磨损"}.get(
+                cd.get("wear_level", "moderate"), "正常使用痕迹")
+
+            # 收集未识别的字段（让 DeepSeek 知道哪些不能编）
+            unknown_fields = [k for k in ["brand", "color", "quantity", "specs", "style"]
+                              if dd.get(k) in ("未知", "")]
+            if unknown_fields:
+                condition_result["_unknown_fields"] = unknown_fields
+
+            color_part = f"颜色{color}，" if color not in ("未知", "") else ""
+            condition_result["_summary"] = (
+                f"📷 图片分析完成：{color_part}这是一件「{name}」，"
+                f"物理成色评分 {score}/100（{wear}）。"
+            )
+
+        return condition_result
+
     handler_dict.update({
         "record_bargain_outcome": _handle_record_outcome,
         "get_bargain_insights": _handle_get_insights,
         "report_real_transaction": _handle_report_real,
+        "assess_item_condition": _handle_assess_condition,
     })
 
 
@@ -709,9 +822,43 @@ def run_agent(messages: List[Dict], stream: bool = False,
         except Exception:
             pass
 
+    # ── 处理多模态消息中的图片 ──
+    # DeepSeek 的聊天 API（带 function calling）不支持 image_url 内容类型，
+    # 所以策略是：下载保存 → 转纯文本 → AI 通过工具调用 Vision
+    try:
+        from .image_utils import process_images_in_messages
+        processed = process_images_in_messages(messages)
+        # 把处理后的图片 URL 暂存到当前对话，供 assess_item_condition handler 使用
+        # 同时存 public_url 和 base64_url：Qwen-VL-Max 只能用 base64 data URL（HTTP URL 下载不到）
+        for pinfo in processed:
+            if pinfo.get("success") and conv_id:
+                _pending_image_urls[conv_id] = {
+                    "public_url": pinfo["public_url"],
+                    "base64_url": pinfo.get("base64_url", pinfo["public_url"]),
+                }
+    except Exception:
+        pass  # 图片处理非关键路径
+
+    # 将 multi-modal 消息转为纯文本（DeepSeek 聊天 API 不支持 image_url）
+    sanitized_messages = []
     for msg in messages:
         if msg.get("role") == "system":
             continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+                elif part.get("type") == "image_url":
+                    text_parts.append("📷 [用户上传了一张照片 — 请调用 assess_item_condition 查看成色]")
+            new_msg = dict(msg)
+            new_msg["content"] = "\n".join(text_parts) if text_parts else "📷 [用户上传了一张照片 — 请调用 assess_item_condition 查看成色]"
+            sanitized_messages.append(new_msg)
+        else:
+            sanitized_messages.append(msg)
+
+    for msg in sanitized_messages:
         full_messages.append(msg)
 
     if stream:

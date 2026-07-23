@@ -158,6 +158,24 @@ def handle_list_item(data: dict) -> dict:
         except (ValueError, ImportError):
             pass  # 底价非必须，出错不影响发布
 
+    # ── 🔬 如果有图片，自动触发生理成色评估 ──
+    image_url = data.get("image_url", "").strip()
+    if image_url:
+        try:
+            from .analyze_image import assess_physical_condition
+            from .bargain_data import record_item_condition
+            condition_result = assess_physical_condition(image_url)
+            if condition_result.get("success"):
+                record_item_condition(
+                    item_id=item_id,
+                    condition_score=condition_result["condition_score"],
+                    vision_confidence=condition_result["vision_confidence"],
+                    condition_detail=condition_result.get("condition_detail"),
+                )
+        except Exception as e:
+            print(f"[list_item] 物理成色评估失败（不影响发布）: {e}")
+            pass  # 成色评估非关键路径，出错不影响发布
+
     # 组装发布成功回复
     tags_str = "、".join([f"#{t}" for t in tags]) if tags else "（未设置标签）"
     return {

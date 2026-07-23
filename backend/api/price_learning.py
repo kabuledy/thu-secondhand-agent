@@ -48,13 +48,17 @@ class PriceLearner:
     每个商品实例化一个对象，从 bargain_data 恢复数据后使用。
     """
 
-    def __init__(self, asking_price: float, seller_min_price: float):
+    def __init__(self, asking_price: float, seller_min_price: float,
+                 condition_score: Optional[float] = None,
+                 vision_confidence: Optional[float] = None):
         """
         初始化学习器。
 
         参数：
           asking_price:     标价（卖家挂出的价格）
           seller_min_price: 卖家底价（卖家愿意接受的最低价格）
+          condition_score:  物理成色评分 0-100（来自视觉分析），None=未知
+          vision_confidence: 视觉判断的置信度 0-1，None=未知
         """
         self.asking_price = asking_price
         self.seller_min_price = seller_min_price
@@ -72,6 +76,11 @@ class PriceLearner:
         # ── 参数 ──
         self.ewma_alpha = 0.35   # EWMA 衰减因子（越大越看重近期数据）
         self.real_weight = 2.0   # 真实数据的权重倍率（真实数据比模拟数据重要）
+
+        # ── 🔬 物理成色参数（新增）──
+        # 从视觉分析中获得，影响估值和置信度
+        self.condition_score = condition_score     # 0-100, None=未知
+        self.vision_confidence = vision_confidence # 0-1, None=未知
 
         # ── 衍生状态 ──
         self._cached_suggestion = None
@@ -176,6 +185,27 @@ class PriceLearner:
         # 确保不超过标价
         self.estimated_mean = min(self.estimated_mean, self.asking_price)
 
+        # ── 4.5 🔬 物理成色调整（新增）──
+        # 视觉识别出的物品物理状况，乘到估值上
+        # 基准成色 = 70（正常二手物品）
+        # condition_score 0-100 → multiplier 0.85-1.15
+        if self.condition_score is not None:
+            # 线性映射：0→0.85, 50→1.00, 70→1.06, 100→1.15
+            condition_multiplier = 0.85 + (self.condition_score / 100) * 0.30
+
+            # 视觉置信度越低，调整幅度越小（保守处理）
+            if self.vision_confidence is not None:
+                # 如果视觉判断只有60%把握，调整幅度打"把握度"折
+                # 但至少保留 50% 的调整（即使视觉没信心，评分方向还是有参考价值）
+                discount = max(0.5, self.vision_confidence)
+                condition_multiplier = 1.0 + (condition_multiplier - 1.0) * discount
+
+            # 应用到估值上
+            self.estimated_mean = self.estimated_mean * condition_multiplier
+
+            # 确保仍不超过标价（物理成色好不应导致超过全新价）
+            self.estimated_mean = min(self.estimated_mean, self.asking_price)
+
         # ── 5. 置信度计算 ──
         total_points = len(self.sim_prices) + len(self.real_prices) * 2
         prior_weight = max(1.0, 5.0 - total_points * 0.5)
@@ -216,7 +246,13 @@ class PriceLearner:
                 "sim_deals": len(self.sim_prices),
                 "sim_fails": len(self.sim_fails),
                 "real_deals": len(self.real_prices),
-            }
+            },
+            # 🔬 物理成色信息（如果有）
+            "physical_condition": {
+                "condition_score": self.condition_score,
+                "vision_confidence": self.vision_confidence,
+                "condition_adjustment_applied": self.condition_score is not None,
+            } if self.condition_score is not None else None,
         }
 
     # ═══════════════════════════════════════════════════════

@@ -53,6 +53,7 @@ def init_bargain_table():
             sim_fails        TEXT DEFAULT '[]',
             real_count       INTEGER DEFAULT 0,
             real_prices      TEXT DEFAULT '[]',
+            condition_data   TEXT DEFAULT '{}',
             created_at       TEXT NOT NULL,
             updated_at       TEXT NOT NULL
         );
@@ -60,6 +61,11 @@ def init_bargain_table():
     # 兼容旧表：如果 category 列不存在则添加
     try:
         conn.execute("ALTER TABLE bargain_data ADD COLUMN category TEXT DEFAULT ''")
+    except Exception:
+        pass  # 列已存在，忽略
+    # 兼容旧表：如果 condition_data 列不存在则添加
+    try:
+        conn.execute("ALTER TABLE bargain_data ADD COLUMN condition_data TEXT DEFAULT '{}'")
     except Exception:
         pass  # 列已存在，忽略
     # 从 items 表回填分类（仅对 category 为空的历史数据）
@@ -85,12 +91,17 @@ def _get_conn() -> sqlite3.Connection:
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
-    for field in ("sim_prices", "sim_fails", "real_prices"):
+    for field in ("sim_prices", "sim_fails", "real_prices", "condition_data"):
         if isinstance(d.get(field), str):
             try:
                 d[field] = json.loads(d[field])
             except (json.JSONDecodeError, TypeError):
-                d[field] = [] if field != "sim_fails" else []
+                if field == "sim_fails":
+                    d[field] = []
+                elif field == "condition_data":
+                    d[field] = {}
+                else:
+                    d[field] = []
     return d
 
 
@@ -114,13 +125,96 @@ def init_item_bargain(item_id: str, item_name: str,
                  sim_count, sim_deal_count, sim_fail_count,
                  sim_prices, sim_fails, real_count, real_prices,
                  created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 0, 0, 0, '[]', '[]', 0, '[]', ?, ?)
+            VALUES (?, ?, ?, ?, ?, 0, 0, 0, '[]', '[]', 0, '[]', '{}', ?, ?)
         """, (item_id, item_name, category, asking_price, seller_min_price, now, now))
         conn.commit()
         return True
     except Exception as e:
         print(f"[bargain_data] init_item_bargain error: {e}")
         return False
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════
+# 🔬 物理成色数据管理（新增）
+# ═══════════════════════════════════════════════════════════
+
+def record_item_condition(item_id: str, condition_score: int,
+                          vision_confidence: float, condition_detail: dict = None) -> bool:
+    """
+    存储一件商品的物理成色评估结果。
+
+    参数：
+        item_id:           商品编号
+        condition_score:   物理成色评分 0-100
+        vision_confidence: 视觉判断置信度 0-1
+        condition_detail:  详细维度字典（可选）
+
+    用途：
+        PriceLearner 在计算估值时会读取此数据，
+        根据物理成色对估值做 ±15% 的调整。
+    """
+    conn = _get_conn()
+    try:
+        now = datetime.now().isoformat()
+        condition_data = json.dumps({
+            "condition_score": condition_score,
+            "vision_confidence": vision_confidence,
+            "condition_detail": condition_detail or {},
+            "assessed_at": now,
+        }, ensure_ascii=False)
+
+        # 先尝试 INSERT，如果已存在则 UPDATE
+        conn.execute("""
+            INSERT INTO bargain_data
+                (item_id, item_name, asking_price, seller_min_price,
+                 sim_count, sim_deal_count, sim_fail_count,
+                 sim_prices, sim_fails, real_count, real_prices,
+                 condition_data, created_at, updated_at)
+            VALUES (?, '', 0, 0, 0, 0, 0, '[]', '[]', 0, '[]', ?, ?, ?)
+            ON CONFLICT(item_id) DO UPDATE SET
+                condition_data = excluded.condition_data,
+                updated_at = excluded.updated_at
+        """, (item_id, condition_data, now, now))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[bargain_data] record_item_condition error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_item_condition(item_id: str) -> Optional[dict]:
+    """
+    读取一件商品的物理成色数据。
+
+    返回：
+        {
+            "condition_score": 85,
+            "vision_confidence": 0.88,
+            "condition_detail": {...},
+            "assessed_at": "2026-07-21T..."
+        }
+        或 None（没有数据时）
+    """
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT condition_data FROM bargain_data WHERE item_id = ?",
+            (item_id,)
+        ).fetchone()
+        if not row:
+            return None
+        data = _row_to_dict(row)
+        cd = data.get("condition_data", {})
+        if cd and cd.get("condition_score") is not None:
+            return cd
+        return None
+    except Exception as e:
+        print(f"[bargain_data] get_item_condition error: {e}")
+        return None
     finally:
         conn.close()
 
